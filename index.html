@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>공식 축구 라인업 생성기</title>
+  <!-- HTML을 이미지로 전환해주는 라이브러리 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    @import url('https://fonts.googleapis.com/css2?family=Teko:wght@700&display=swap');
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Pretendard', sans-serif;
+    }
+
+    body {
+      background-color: #0d0d11;
+      color: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 10px;
+    }
+
+    /* 전체 레이아웃 */
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 25px;
+      width: 100%;
+      max-width: 1200px;
+    }
+
+    @media (min-width: 1024px) {
+      .container {
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: center;
+      }
+    }
+
+    /* 컨트롤 패널 */
+    .control-panel {
+      width: 100%;
+      max-width: 420px;
+      background: #16161d;
+      border: 1px solid #2a2a35;
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .control-panel h2 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #ff3344;
+      border-bottom: 1px solid #2a2a35;
+      padding-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #ff8894;
+      margin-top: 4px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .input-group label {
+      font-size: 0.85rem;
+      color: #a0a0ab;
+      font-weight: 600;
+    }
+
+    .input-group input, .input-group select {
+      background: #20202a;
+      border: 1px solid #323242;
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+
+    .input-group input:focus, .input-group select:focus {
+      border-color: #ff3344;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-sub {
+      flex: 1;
+      background: #2a2a38;
+      color: #ffffff;
+      border: 1px solid #3a3a4c;
+      padding: 10px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-sub:hover {
+      background: #3a3a4c;
+    }
+
+    .btn-download {
+      background: linear-gradient(135deg, #e60023, #990014);
+      color: #ffffff;
+      border: none;
+      padding: 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: 6px;
+      transition: background 0.2s;
+    }
+
+    .btn-download:hover {
+      background: linear-gradient(135deg, #ff1a35, #b30018);
+    }
+
+    /* 프리뷰 컨테이너 (스케일링 제어) */
+    .preview-wrapper {
+      width: 100%;
+      max-width: 500px;
+      container-type: inline-size;
+      display: flex;
+      justify-content: center;
+    }
+
+    /* 1. 기본 그래픽 모드 */
+    .pitch-card {
+      width: 100%;
+      aspect-ratio: 4 / 6.5;
+      background: linear-gradient(180deg, #180305 0%, #0a0102 50%, #000000 100%);
+      border-radius: 4cqw;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 0.4cqw solid #2a080c;
+      transition: all 0.3s ease;
+    }
+
+    /* 피트 라인 그래픽 */
+    .pitch-graphics {
+      position: absolute;
+      inset: 0;
+      opacity: 0.2;
+      pointer-events: none;
+    }
+
+    .pitch-line {
+      position: absolute;
+      border: 0.3cqw solid #ffffff;
+    }
+
+    .pitch-outline {
+      inset: 3cqw;
+      border-radius: 2cqw;
+    }
+
+    .pitch-center-line {
+      top: 50%; left: 3cqw; right: 3cqw;
+      height: 0;
+      border-top: 0.4cqw dashed #ff3344;
+    }
+
+    .pitch-center-circle {
+      top: 50%; left: 50%;
+      width: 20cqw; height: 20cqw;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+    }
+
+    /* 상단 헤더 */
+    .card-header {
+      position: relative;
+      z-index: 2;
+      padding: 4cqw 3cqw 1cqw;
+      text-align: center;
+    }
+
+    .team-title {
+      font-size: 5cqw;
+      font-weight: 900;
+      letter-spacing: -0.1cqw;
+      color: #ffffff;
+    }
+
+    .match-info {
+      font-size: 2.2cqw;
+      color: #ff3344;
+      font-weight: 800;
+      letter-spacing: 0.3cqw;
+      margin-top: 0.5cqw;
+    }
+
+    /* 메인 경기장 레이아웃 */
+    .pitch-body {
+      position: relative;
+      z-index: 2;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 2cqw;
+    }
+
+    /* 하프 섹션 */
+    .half-section {
+      height: 50%;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      box-sizing: border-box;
+    }
+
+    /* 후반전 영역 */
+    .half-section.second-half {
+      justify-content: flex-start;
+      gap: 1cqw;
+      padding-top: 3.5cqw; /* 살짝 위로 당김 */
+      padding-bottom: 2cqw;
+    }
+
+    /* 전반전 영역 */
+    .half-section.first-half {
+      justify-content: space-around;
+      padding-top: 2cqw;
+    }
+
+    /* 전/후반 배지 */
+    .half-badge {
+      position: absolute;
+      right: 1.5cqw;
+      background: #ff3344;
+      color: #ffffff;
+      font-size: 1.8cqw;
+      font-weight: 900;
+      padding: 0.4cqw 1.5cqw;
+      border-radius: 1cqw;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .half-section.second-half .half-badge { top: 0; }
+    .half-section.first-half .half-badge { bottom: 0; }
+
+    .row {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      width: 100%;
+    }
+
+    /* 선수 카드 */
+    .player-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 15cqw;
+    }
+
+    /* 번호 배지 */
+    .badge {
+      width: 7.2cqw;
+      height: 7.2cqw;
+      background: linear-gradient(135deg, #cc001b, #7a000e);
+      border: 0.2cqw solid rgba(255, 255, 255, 0.3);
+      border-radius: 1.6cqw;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Teko', sans-serif;
+      font-weight: 700;
+      font-size: 4cqw;
+      color: #ffffff;
+      margin-bottom: 0.8cqw;
+      outline: none;
+    }
+
+    .gk .badge {
+      background: #25252e;
+      border-color: #555566;
+      color: #ff3344;
+    }
+
+    /* 평행사변형 이름 박스 */
+    .player-name-box {
+      background: #ffffff;
+      padding: 0.4cqw 1.2cqw;
+      transform: skewX(-12deg);
+      border-radius: 0.4cqw;
+      width: 100%;
+      text-align: center;
+    }
+
+    .player-name {
+      transform: skewX(12deg);
+      font-size: 2.1cqw;
+      font-weight: 800;
+      color: #000000;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+      outline: none;
+    }
+
+    /* 하단 푸터 */
+    .card-footer {
+      position: relative;
+      z-index: 2;
+      padding: 0 3cqw 3cqw;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 2cqw;
+      color: #888899;
+      font-weight: 700;
+    }
+
+    .logo-tag { color: #ff3344; }
+
+    /* 2. A4 문서 모드 (A4 맞춤 세부 조정) */
+    .pitch-card.doc-mode {
+      background: #ffffff !important;
+      border: 0.4cqw solid #cccccc !important;
+      color: #000000 !important;
+      aspect-ratio: 1 / 1.414;
+    }
+
+    /* A4 모드 전용 후반전 미세 위쪽 위치 조정 */
+    .pitch-card.doc-mode .half-section.second-half {
+      padding-top: 1.8cqw; /* A4 모드에서 후반 라인업을 약간 더 위로 올림 */
+      gap: 0.8cqw;
+    }
+
+    .pitch-card.doc-mode .pitch-graphics { opacity: 1; }
+    .pitch-card.doc-mode .pitch-line { border-color: #aaaaaa; }
+    .pitch-card.doc-mode .pitch-center-line { border-top: 0.3cqw dashed #888888; }
+    .pitch-card.doc-mode .team-title { color: #000000; }
+    .pitch-card.doc-mode .match-info { color: #555555; }
+    .pitch-card.doc-mode .half-badge { background: #555555; color: #ffffff; }
+    .pitch-card.doc-mode .badge { background: #ffffff; border: 0.3cqw solid #333333; color: #000000; }
+    .pitch-card.doc-mode .gk .badge { background: #e0e0e0; border-color: #000000; color: #000000; }
+    .pitch-card.doc-mode .player-name-box { background: #f0f0f0; border: 0.2cqw solid #cccccc; }
+    .pitch-card.doc-mode .player-name { color: #000000; }
+    .pitch-card.doc-mode .card-footer { color: #666666; }
+    .pitch-card.doc-mode .logo-tag { color: #333333; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- 컨트롤 패널 -->
+    <div class="control-panel">
+      <h2>라인업 설정</h2>
+      
+      <div class="input-group">
+        <label for="modeSelect">출력 모드 선택</label>
+        <select id="modeSelect" onchange="toggleMode()">
+          <option value="graphic">그래픽 모드 (디지털 테마)</option>
+          <option value="doc">A4 문서 모드 (회색 선/출력용)</option>
+        </select>
+      </div>
+
+      <div class="input-group">
+        <label for="teamNameInput">팀 이름</label>
+        <input type="text" id="teamNameInput" value="맨체스터 유나이티드" oninput="onDataChange()">
+      </div>
+
+      <div class="input-group">
+        <label for="matchInfoInput">경기 정보</label>
+        <input type="text" id="matchInfoInput" value="1라운드 • 전/후반 통합 명단" oninput="onDataChange()">
+      </div>
+
+      <div class="section-title">후반전 포메이션 (위쪽 영역)</div>
+      <div class="input-group">
+        <label for="formation2ndInput">포메이션 (예: 6-2-2, 4-3-3)</label>
+        <input type="text" id="formation2ndInput" value="4-3-3" oninput="onDataChange()">
+      </div>
+
+      <div class="section-title">전반전 포메이션 (아래쪽 영역)</div>
+      <div class="input-group">
+        <label for="formation1stInput">포메이션 (예: 1-7-1-1, 4-2-3-1)</label>
+        <input type="text" id="formation1stInput" value="4-2-3-1" oninput="onDataChange()">
+      </div>
+
+      <!-- 내보내기 및 불러오기 버튼 -->
+      <div class="btn-group">
+        <button class="btn-sub" onclick="exportConfig()">💾 설정 내보내기</button>
+        <button class="btn-sub" onclick="document.getElementById('importFileInput').click()">📂 설정 불러오기</button>
+        <input type="file" id="importFileInput" style="display:none;" accept=".json" onchange="importConfig(event)">
+      </div>
+
+      <button class="btn-download" onclick="downloadLineup()">이미지로 저장하기</button>
+    </div>
+
+    <!-- 라인업 그래픽 카드 -->
+    <div class="preview-wrapper">
+      <div class="pitch-card" id="lineupCard">
+        <!-- 필드 그래픽 -->
+        <div class="pitch-graphics">
+          <div class="pitch-line pitch-outline"></div>
+          <div class="pitch-line pitch-center-line"></div>
+          <div class="pitch-line pitch-center-circle"></div>
+        </div>
+
+        <!-- 상단 헤더 -->
+        <div class="card-header">
+          <div class="team-title" id="displayTeamName">맨체스터 유나이티드</div>
+          <div class="match-info" id="displayMatchInfo">1라운드 • 전/후반 통합 명단</div>
+        </div>
+
+        <!-- 필드 레이아웃 -->
+        <div class="pitch-body">
+          <!-- 후반전 (상단) -->
+          <div class="half-section second-half" id="grid2nd">
+            <div class="half-badge">후반전</div>
+          </div>
+
+          <!-- 전반전 (하단) -->
+          <div class="half-section first-half" id="grid1st">
+            <div class="half-badge">전반전</div>
+          </div>
+        </div>
+
+        <!-- 하단 푸터 -->
+        <div class="card-footer">
+          <span class="logo-tag">공식 라인업</span>
+          <span>선발 및 교체 명단</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const koreanNames = [
+      '래시포드', '호일룬', '가르나초', '페르난데스', '카세미루', 
+      '마이누', '쇼', '마르티네스', '바란', '달롯', '오나나',
+      '안토니', '에릭센', '마운트', '린델뢰프', '매과이어', '에반스'
+    ];
+
+    function updateHeader() {
+      document.getElementById('displayTeamName').innerText = document.getElementById('teamNameInput').value || '팀 이름';
+      document.getElementById('displayMatchInfo').innerText = document.getElementById('matchInfoInput').value || '경기 정보';
+    }
+
+    function toggleMode() {
+      const mode = document.getElementById('modeSelect').value;
+      const card = document.getElementById('lineupCard');
+      if (mode === 'doc') {
+        card.classList.add('doc-mode');
+      } else {
+        card.classList.remove('doc-mode');
+      }
+    }
+
+    function generateFormationRows(formationStr, isSecondHalf = false) {
+      const parseNums = formationStr.split('-').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0);
+      const counts = parseNums.length > 0 ? parseNums : [4, 3, 3];
+      
+      let rows = [];
+      let nameIdx = 0;
+
+      if (isSecondHalf) {
+        rows.push([{ num: 1, name: '골키퍼', gk: true }]);
+        counts.forEach(count => {
+          let rowData = [];
+          for (let i = 0; i < count; i++) {
+            rowData.push({
+              num: (nameIdx % 99) + 2,
+              name: koreanNames[nameIdx % koreanNames.length]
+            });
+            nameIdx++;
+          }
+          rows.push(rowData);
+        });
+      } else {
+        counts.forEach(count => {
+          let rowData = [];
+          for (let i = 0; i < count; i++) {
+            rowData.push({
+              num: (nameIdx % 99) + 2,
+              name: koreanNames[nameIdx % koreanNames.length]
+            });
+            nameIdx++;
+          }
+          rows.push(rowData);
+        });
+        rows.push([{ num: 24, name: '오나나', gk: true }]);
+      }
+
+      return rows;
+    }
+
+    function buildHalfGrid(elementId, rows, isSecondHalf) {
+      const container = document.getElementById(elementId);
+      container.innerHTML = `<div class="half-badge">${isSecondHalf ? '후반전' : '전반전'}</div>`;
+
+      rows.forEach(rowData => {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'row';
+
+        rowData.forEach(player => {
+          const playerDiv = document.createElement('div');
+          playerDiv.className = `player-card ${player.gk ? 'gk' : ''}`;
+          
+          playerDiv.innerHTML = `
+            <div class="badge" contenteditable="true" spellcheck="false">${player.num}</div>
+            <div class="player-name-box">
+              <span class="player-name" contenteditable="true" spellcheck="false">${player.name}</span>
+            </div>
+          `;
+          rowDiv.appendChild(playerDiv);
+        });
+
+        container.appendChild(rowDiv);
+      });
+    }
+
+    function renderAllFormations() {
+      const f2nd = document.getElementById('formation2ndInput').value;
+      const f1st = document.getElementById('formation1stInput').value;
+
+      const rows2nd = generateFormationRows(f2nd, true);
+      const rows1st = generateFormationRows(f1st, false);
+
+      buildHalfGrid('grid2nd', rows2nd, true);
+      buildHalfGrid('grid1st', rows1st, false);
+    }
+
+    function onDataChange() {
+      updateHeader();
+      renderAllFormations();
+      saveToLocalStorage();
+    }
+
+    function saveToLocalStorage() {
+      const data = {
+        teamName: document.getElementById('teamNameInput').value,
+        matchInfo: document.getElementById('matchInfoInput').value,
+        formation2nd: document.getElementById('formation2ndInput').value,
+        formation1st: document.getElementById('formation1stInput').value,
+        mode: document.getElementById('modeSelect').value
+      };
+      localStorage.setItem('lineupConfig', JSON.stringify(data));
+    }
+
+    function loadFromLocalStorage() {
+      const saved = localStorage.getItem('lineupConfig');
+      if (saved) {
+        try {
+          const data = JSON.parse(saved);
+          document.getElementById('teamNameInput').value = data.teamName || '맨체스터 유나이티드';
+          document.getElementById('matchInfoInput').value = data.matchInfo || '1라운드 • 전/후반 통합 명단';
+          document.getElementById('formation2ndInput').value = data.formation2nd || '4-3-3';
+          document.getElementById('formation1stInput').value = data.formation1st || '4-2-3-1';
+          document.getElementById('modeSelect').value = data.mode || 'graphic';
+          toggleMode();
+        } catch(e) {}
+      }
+    }
+
+    function exportConfig() {
+      const data = {
+        teamName: document.getElementById('teamNameInput').value,
+        matchInfo: document.getElementById('matchInfoInput').value,
+        formation2nd: document.getElementById('formation2ndInput').value,
+        formation1st: document.getElementById('formation1stInput').value,
+        mode: document.getElementById('modeSelect').value
+      };
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${data.teamName || '라인업'}_설정.json`;
+      link.click();
+    }
+
+    function importConfig(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.teamName) document.getElementById('teamNameInput').value = data.teamName;
+          if (data.matchInfo) document.getElementById('matchInfoInput').value = data.matchInfo;
+          if (data.formation2nd) document.getElementById('formation2ndInput').value = data.formation2nd;
+          if (data.formation1st) document.getElementById('formation1stInput').value = data.formation1st;
+          if (data.mode) {
+            document.getElementById('modeSelect').value = data.mode;
+            toggleMode();
+          }
+          onDataChange();
+        } catch(err) {
+          alert('올바른 설정 파일이 아닙니다.');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function downloadLineup() {
+      const card = document.getElementById('lineupCard');
+      
+      html2canvas(card, {
+        scale: 3,
+        backgroundColor: null,
+        useCORS: true
+      }).then(canvas => {
+        const link = document.createElement('a');
+        const teamName = document.getElementById('teamNameInput').value || '라인업';
+        const mode = document.getElementById('modeSelect').value;
+        link.download = `${teamName.replace(/\s+/g, '_')}_${mode === 'doc' ? 'A4문서' : '디지털'}_라인업.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      });
+    }
+
+    // 초기화
+    loadFromLocalStorage();
+    onDataChange();
+  </script>
+</body>
+</html>
