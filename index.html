@@ -341,6 +341,43 @@
 
     .logo-tag { color: #ff3344; }
 
+    /* ===== 드래그로 선수 자리 교체 ===== */
+    .player-card {
+      touch-action: none;
+      cursor: grab;
+      -webkit-touch-callout: none;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+
+    .player-card.pressing { transform: scale(0.92); }
+    .player-card.drag-source { opacity: 0.25; }
+    .player-card.drop-target { transform: scale(1.08); }
+    .player-card.drop-target .badge { box-shadow: 0 0 0 0.6cqw #ffd54a; }
+
+    .player-card.drag-ghost {
+      position: absolute;
+      z-index: 20;
+      margin: 0;
+      pointer-events: none;
+      transform: scale(1.15);
+      opacity: 0.96;
+      transition: none;
+      filter: drop-shadow(0 1.5cqw 2cqw rgba(0, 0, 0, 0.6));
+    }
+
+    body.dragging-player,
+    body.dragging-player * {
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: grabbing !important;
+    }
+
+    .drag-hint {
+      font-size: 0.78rem;
+      color: #8a8a99;
+      line-height: 1.5;
+    }
+
     /* 2. A4 문서 모드 (A4 맞춤 세부 조정) */
     .pitch-card.doc-mode {
       background: #ffffff !important;
@@ -412,6 +449,8 @@
         <button class="btn-sub" onclick="document.getElementById('importFileInput').click()">📂 설정 불러오기</button>
         <input type="file" id="importFileInput" style="display:none;" accept=".json" onchange="importConfig(event)">
       </div>
+
+      <div class="drag-hint">💡 선수를 꾹 누른 채 다른 선수 위로 드래그하면 이름과 번호가 통째로 서로 교체돼요. (전/후반 사이, 골키퍼도 가능)</div>
 
       <button class="btn-download" onclick="downloadLineup()">이미지로 저장하기</button>
     </div>
@@ -668,6 +707,209 @@
           document.execCommand('insertText', false, text);
         }
       });
+    })();
+
+    /* ---------- 꾹 눌러 드래그해서 선수 교체 ---------- */
+    (function setupDragSwap() {
+      const HOLD_MS = 350;   // 이만큼 누르고 있으면 드래그 시작
+      const MOVE_TOL = 10;   // 누르는 동안 이 이상 움직이면 취소(텍스트 선택 등 기본 동작 유지)
+      const cardEl = document.getElementById('lineupCard');
+
+      let press = null;
+      let drag = null;
+      let lastX = 0, lastY = 0;
+
+      function slotOf(pc) {
+        return { half: pc.dataset.half, kind: pc.dataset.kind, idx: parseInt(pc.dataset.idx) };
+      }
+
+      function findCard(s) {
+        return cardEl.querySelector(
+          `.player-card:not(.drag-ghost)[data-half="${s.half}"][data-kind="${s.kind}"][data-idx="${s.idx}"]`
+        );
+      }
+
+      function getPlayer(s) {
+        const p = s.kind === 'gk' ? players[s.half].gk : getFieldPlayer(s.half, s.idx);
+        return { num: p.num, name: p.name };
+      }
+
+      function cancelPress() {
+        if (!press) return;
+        clearTimeout(press.holdTimer);
+        clearTimeout(press.visTimer);
+        press.card.classList.remove('pressing');
+        press = null;
+      }
+
+      cardEl.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (press || drag) return;
+        const pc = e.target.closest('.player-card');
+        if (!pc) return;
+
+        // 이미 글자를 편집 중인 칸에서는 드래그 대신 일반 텍스트 조작 허용
+        const editable = e.target.closest('[contenteditable]');
+        if (editable && document.activeElement === editable) return;
+
+        lastX = e.clientX; lastY = e.clientY;
+        press = {
+          card: pc,
+          startX: e.clientX,
+          startY: e.clientY,
+          visTimer: setTimeout(() => pc.classList.add('pressing'), 130),
+          holdTimer: setTimeout(startDrag, HOLD_MS)
+        };
+      });
+
+      function startDrag() {
+        if (!press) return;
+        const pc = press.card;
+        const slot = slotOf(pc);
+        clearTimeout(press.visTimer);
+        pc.classList.remove('pressing');
+        press = null;
+
+        // 편집 포커스/선택 해제
+        const ae = document.activeElement;
+        if (ae && ae !== document.body && ae.blur) ae.blur();
+        const sel = window.getSelection();
+        if (sel) sel.removeAllRanges();
+
+        const rect = pc.getBoundingClientRect();
+        const ghost = pc.cloneNode(true);
+        ghost.classList.add('drag-ghost');
+        ghost.querySelectorAll('[contenteditable]').forEach(n => n.removeAttribute('contenteditable'));
+        ghost.style.width = rect.width + 'px';
+        cardEl.appendChild(ghost);
+
+        pc.classList.add('drag-source');
+        document.body.classList.add('dragging-player');
+
+        drag = { card: pc, slot, ghost, w: rect.width, h: rect.height, target: null };
+        moveGhost(lastX, lastY);
+        updateTarget(lastX, lastY);
+
+        if (navigator.vibrate) navigator.vibrate(15);
+      }
+
+      function moveGhost(x, y) {
+        const cr = cardEl.getBoundingClientRect();
+        drag.ghost.style.left = (x - cr.left - cardEl.clientLeft - drag.w / 2) + 'px';
+        drag.ghost.style.top = (y - cr.top - cardEl.clientTop - drag.h / 2) + 'px';
+      }
+
+      // 포인터와 가장 가까운 다른 선수 칸을 교체 대상으로 선택
+      function updateTarget(x, y) {
+        const sr = drag.card.getBoundingClientRect();
+        const selfDist = Math.hypot(x - (sr.left + sr.width / 2), y - (sr.top + sr.height / 2));
+
+        let best = null, bestD = Infinity;
+        cardEl.querySelectorAll('.player-card:not(.drag-ghost)').forEach(c => {
+          if (c === drag.card) return;
+          const r = c.getBoundingClientRect();
+          const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+          if (d < bestD) { bestD = d; best = c; }
+        });
+
+        const next = (best && bestD < drag.w * 0.9 && bestD < selfDist) ? best : null;
+        if (next !== drag.target) {
+          if (drag.target) drag.target.classList.remove('drop-target');
+          if (next) next.classList.add('drop-target');
+          drag.target = next;
+        }
+      }
+
+      // FLIP 애니메이션: 이전 위치에서 현재 위치로 부드럽게 이동
+      function animateFrom(el, fromRect, scale) {
+        if (!el) return;
+        const to = el.getBoundingClientRect();
+        const dx = (fromRect.left + fromRect.width / 2) - (to.left + to.width / 2);
+        const dy = (fromRect.top + fromRect.height / 2) - (to.top + to.height / 2);
+
+        el.style.transition = 'none';
+        el.style.position = 'relative';
+        el.style.zIndex = '5';
+        el.style.transform = `translate(${dx}px, ${dy}px) scale(${scale})`;
+        void el.offsetWidth; // 리플로우 강제
+
+        el.style.transition = 'transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1)';
+        el.style.transform = '';
+        setTimeout(() => {
+          el.style.transition = '';
+          el.style.position = '';
+          el.style.zIndex = '';
+          el.style.transform = '';
+        }, 430);
+      }
+
+      function endDrag(commit) {
+        const d = drag;
+        drag = null;
+        document.body.classList.remove('dragging-player');
+        if (d.target) d.target.classList.remove('drop-target');
+
+        if (commit && d.target) {
+          const sA = d.slot;
+          const sB = slotOf(d.target);
+          const ghostRect = d.ghost.getBoundingClientRect();
+          const rectB = d.target.getBoundingClientRect();
+
+          // 이름 + 번호 통째로 교체
+          const pa = getPlayer(sA);
+          const pb = getPlayer(sB);
+          setPlayerProp(sA.half, sA.kind, sA.idx, 'num', pb.num);
+          setPlayerProp(sA.half, sA.kind, sA.idx, 'name', pb.name);
+          setPlayerProp(sB.half, sB.kind, sB.idx, 'num', pa.num);
+          setPlayerProp(sB.half, sB.kind, sB.idx, 'name', pa.name);
+
+          d.ghost.remove();
+          renderAllFormations();
+          saveToLocalStorage();
+
+          // 드래그한 선수는 손을 뗀 위치에서 → 새 자리로, 상대 선수는 자기 자리 → 내 자리로
+          animateFrom(findCard(sB), ghostRect, 1.15);
+          animateFrom(findCard(sA), rectB, 1);
+        } else {
+          // 교체 대상이 없으면 원래 자리로 되돌아가기
+          const cr = cardEl.getBoundingClientRect();
+          const r = d.card.getBoundingClientRect();
+          d.ghost.style.transition = 'left 0.25s ease, top 0.25s ease, transform 0.25s ease';
+          d.ghost.style.left = (r.left - cr.left - cardEl.clientLeft) + 'px';
+          d.ghost.style.top = (r.top - cr.top - cardEl.clientTop) + 'px';
+          d.ghost.style.transform = 'scale(1)';
+          setTimeout(() => {
+            d.ghost.remove();
+            d.card.classList.remove('drag-source');
+          }, 270);
+        }
+      }
+
+      window.addEventListener('pointermove', e => {
+        lastX = e.clientX; lastY = e.clientY;
+        if (press) {
+          if (Math.hypot(e.clientX - press.startX, e.clientY - press.startY) > MOVE_TOL) cancelPress();
+        } else if (drag) {
+          e.preventDefault();
+          moveGhost(e.clientX, e.clientY);
+          updateTarget(e.clientX, e.clientY);
+        }
+      }, { passive: false });
+
+      window.addEventListener('pointerup', () => {
+        if (press) cancelPress();
+        else if (drag) endDrag(true);
+      });
+
+      window.addEventListener('pointercancel', () => {
+        if (press) cancelPress();
+        else if (drag) endDrag(false);
+      });
+
+      // 드래그 중 화면 스크롤/텍스트 선택/길게 누르기 메뉴 방지
+      window.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });
+      document.addEventListener('selectstart', e => { if (drag) e.preventDefault(); });
+      cardEl.addEventListener('contextmenu', e => { if (press || drag) e.preventDefault(); });
     })();
 
     /* ---------- 저장 / 불러오기 ---------- */
