@@ -375,10 +375,10 @@
     <!-- 컨트롤 패널 -->
     <div class="control-panel">
       <h2>라인업 설정</h2>
-      
+
       <div class="input-group">
         <label for="modeSelect">출력 모드 선택</label>
-        <select id="modeSelect" onchange="toggleMode()">
+        <select id="modeSelect" onchange="onModeChange()">
           <option value="graphic">그래픽 모드 (디지털 테마)</option>
           <option value="doc">A4 문서 모드 (회색 선/출력용)</option>
         </select>
@@ -455,11 +455,83 @@
   </div>
 
   <script>
+    const STORAGE_KEY = 'lineupConfig';
+
     const koreanNames = [
-      '래시포드', '호일룬', '가르나초', '페르난데스', '카세미루', 
+      '래시포드', '호일룬', '가르나초', '페르난데스', '카세미루',
       '마이누', '쇼', '마르티네스', '바란', '달롯', '오나나',
       '안토니', '에릭센', '마운트', '린델뢰프', '매과이어', '에반스'
     ];
+
+    /*
+      선수 데이터 저장 구조
+      players.second / players.first = { gk: {num, name}, field: [{num, name}, ...] }
+      - field 는 "선수 풀"입니다. 포메이션이 바뀌면 앞에서부터 순서대로 새 배치에 채워지고,
+        포메이션 인원이 줄어도 풀은 잘리지 않아서 다시 늘리면 원래 선수가 복원됩니다.
+    */
+    function defaultGK(half) {
+      return half === 'second' ? { num: '1', name: '골키퍼' } : { num: '24', name: '오나나' };
+    }
+
+    function defaultField(i) {
+      return { num: String((i % 99) + 2), name: koreanNames[i % koreanNames.length] };
+    }
+
+    function emptyPlayers() {
+      return {
+        second: { gk: defaultGK('second'), field: [] },
+        first: { gk: defaultGK('first'), field: [] }
+      };
+    }
+
+    let players = emptyPlayers();
+
+    function normalizePlayers(p) {
+      const result = emptyPlayers();
+      if (!p || typeof p !== 'object') return result;
+      ['second', 'first'].forEach(half => {
+        const src = p[half];
+        if (!src) return;
+        if (src.gk && typeof src.gk === 'object') {
+          result[half].gk = {
+            num: String(src.gk.num ?? result[half].gk.num),
+            name: String(src.gk.name ?? result[half].gk.name)
+          };
+        }
+        if (Array.isArray(src.field)) {
+          result[half].field = src.field.map((f, i) => {
+            const d = defaultField(i);
+            return {
+              num: String((f && f.num) ?? d.num),
+              name: String((f && f.name) ?? d.name)
+            };
+          });
+        }
+      });
+      return result;
+    }
+
+    function getFieldPlayer(half, i) {
+      return players[half].field[i] || defaultField(i);
+    }
+
+    function setPlayerProp(half, kind, idx, prop, value) {
+      const h = players[half];
+      if (kind === 'gk') {
+        h.gk[prop] = value;
+      } else {
+        while (h.field.length <= idx) h.field.push(defaultField(h.field.length));
+        h.field[idx][prop] = value;
+      }
+    }
+
+    function parseFormation(str) {
+      const nums = str.split('-')
+        .map(n => parseInt(n.trim()))
+        .filter(n => !isNaN(n) && n > 0)
+        .map(n => Math.min(n, 11));
+      return nums.length > 0 ? nums : [4, 3, 3];
+    }
 
     function updateHeader() {
       document.getElementById('displayTeamName').innerText = document.getElementById('teamNameInput').value || '팀 이름';
@@ -469,70 +541,80 @@
     function toggleMode() {
       const mode = document.getElementById('modeSelect').value;
       const card = document.getElementById('lineupCard');
-      if (mode === 'doc') {
-        card.classList.add('doc-mode');
-      } else {
-        card.classList.remove('doc-mode');
-      }
+      card.classList.toggle('doc-mode', mode === 'doc');
     }
 
-    function generateFormationRows(formationStr, isSecondHalf = false) {
-      const parseNums = formationStr.split('-').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0);
-      const counts = parseNums.length > 0 ? parseNums : [4, 3, 3];
-      
-      let rows = [];
-      let nameIdx = 0;
+    function onModeChange() {
+      toggleMode();
+      saveToLocalStorage();
+    }
 
-      if (isSecondHalf) {
-        rows.push([{ num: 1, name: '골키퍼', gk: true }]);
-        counts.forEach(count => {
-          let rowData = [];
-          for (let i = 0; i < count; i++) {
-            rowData.push({
-              num: (nameIdx % 99) + 2,
-              name: koreanNames[nameIdx % koreanNames.length]
-            });
-            nameIdx++;
-          }
-          rows.push(rowData);
-        });
-      } else {
-        counts.forEach(count => {
-          let rowData = [];
-          for (let i = 0; i < count; i++) {
-            rowData.push({
-              num: (nameIdx % 99) + 2,
-              name: koreanNames[nameIdx % koreanNames.length]
-            });
-            nameIdx++;
-          }
-          rows.push(rowData);
-        });
-        rows.push([{ num: 24, name: '오나나', gk: true }]);
-      }
+    // 한 하프의 줄(row) 구성 — 선수 데이터는 풀에서 가져옴
+    function buildRows(half, formationStr) {
+      const counts = parseFormation(formationStr);
+      const rows = [];
+      let idx = 0;
+
+      counts.forEach(count => {
+        const rowData = [];
+        for (let i = 0; i < count; i++) {
+          const p = getFieldPlayer(half, idx);
+          rowData.push({ kind: 'field', idx: idx, num: p.num, name: p.name });
+          idx++;
+        }
+        rows.push(rowData);
+      });
+
+      const gk = players[half].gk;
+      const gkRow = [{ kind: 'gk', idx: 0, num: gk.num, name: gk.name }];
+
+      // 후반전(위쪽)은 골키퍼가 맨 위, 전반전(아래쪽)은 맨 아래
+      if (half === 'second') rows.unshift(gkRow);
+      else rows.push(gkRow);
 
       return rows;
     }
 
-    function buildHalfGrid(elementId, rows, isSecondHalf) {
+    function buildHalfGrid(elementId, half, formationStr) {
       const container = document.getElementById(elementId);
-      container.innerHTML = `<div class="half-badge">${isSecondHalf ? '후반전' : '전반전'}</div>`;
+      container.innerHTML = '';
 
-      rows.forEach(rowData => {
+      const badge = document.createElement('div');
+      badge.className = 'half-badge';
+      badge.textContent = half === 'second' ? '후반전' : '전반전';
+      container.appendChild(badge);
+
+      buildRows(half, formationStr).forEach(rowData => {
         const rowDiv = document.createElement('div');
         rowDiv.className = 'row';
 
         rowData.forEach(player => {
-          const playerDiv = document.createElement('div');
-          playerDiv.className = `player-card ${player.gk ? 'gk' : ''}`;
-          
-          playerDiv.innerHTML = `
-            <div class="badge" contenteditable="true" spellcheck="false">${player.num}</div>
-            <div class="player-name-box">
-              <span class="player-name" contenteditable="true" spellcheck="false">${player.name}</span>
-            </div>
-          `;
-          rowDiv.appendChild(playerDiv);
+          const card = document.createElement('div');
+          card.className = 'player-card' + (player.kind === 'gk' ? ' gk' : '');
+          card.dataset.half = half;
+          card.dataset.kind = player.kind;
+          card.dataset.idx = player.idx;
+
+          const numEl = document.createElement('div');
+          numEl.className = 'badge';
+          numEl.contentEditable = 'true';
+          numEl.spellcheck = false;
+          numEl.dataset.prop = 'num';
+          numEl.textContent = player.num;
+
+          const nameBox = document.createElement('div');
+          nameBox.className = 'player-name-box';
+          const nameEl = document.createElement('span');
+          nameEl.className = 'player-name';
+          nameEl.contentEditable = 'true';
+          nameEl.spellcheck = false;
+          nameEl.dataset.prop = 'name';
+          nameEl.textContent = player.name;
+          nameBox.appendChild(nameEl);
+
+          card.appendChild(numEl);
+          card.appendChild(nameBox);
+          rowDiv.appendChild(card);
         });
 
         container.appendChild(rowDiv);
@@ -540,14 +622,8 @@
     }
 
     function renderAllFormations() {
-      const f2nd = document.getElementById('formation2ndInput').value;
-      const f1st = document.getElementById('formation1stInput').value;
-
-      const rows2nd = generateFormationRows(f2nd, true);
-      const rows1st = generateFormationRows(f1st, false);
-
-      buildHalfGrid('grid2nd', rows2nd, true);
-      buildHalfGrid('grid1st', rows1st, false);
+      buildHalfGrid('grid2nd', 'second', document.getElementById('formation2ndInput').value);
+      buildHalfGrid('grid1st', 'first', document.getElementById('formation1stInput').value);
     }
 
     function onDataChange() {
@@ -556,41 +632,81 @@
       saveToLocalStorage();
     }
 
-    function saveToLocalStorage() {
-      const data = {
+    /* ---------- 선수 이름/번호 직접 수정 → 즉시 저장 ---------- */
+    (function setupLiveEditing() {
+      const card = document.getElementById('lineupCard');
+
+      card.addEventListener('input', e => {
+        const el = e.target;
+        if (!el.dataset || !el.dataset.prop) return;
+        const playerCard = el.closest('.player-card');
+        if (!playerCard) return;
+
+        setPlayerProp(
+          playerCard.dataset.half,
+          playerCard.dataset.kind,
+          parseInt(playerCard.dataset.idx),
+          el.dataset.prop,
+          el.textContent
+        );
+        saveToLocalStorage(); // 입력하는 즉시 저장 (다시 그리지 않으므로 커서 유지)
+      });
+
+      // 엔터로 줄바꿈 방지
+      card.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.dataset && e.target.dataset.prop) {
+          e.preventDefault();
+          e.target.blur();
+        }
+      });
+
+      // 붙여넣기는 일반 텍스트로만
+      card.addEventListener('paste', e => {
+        if (e.target.dataset && e.target.dataset.prop) {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\s+/g, ' ');
+          document.execCommand('insertText', false, text);
+        }
+      });
+    })();
+
+    /* ---------- 저장 / 불러오기 ---------- */
+    function collectState() {
+      return {
         teamName: document.getElementById('teamNameInput').value,
         matchInfo: document.getElementById('matchInfoInput').value,
         formation2nd: document.getElementById('formation2ndInput').value,
         formation1st: document.getElementById('formation1stInput').value,
-        mode: document.getElementById('modeSelect').value
+        mode: document.getElementById('modeSelect').value,
+        players: players
       };
-      localStorage.setItem('lineupConfig', JSON.stringify(data));
+    }
+
+    function applyState(data) {
+      if (data.teamName !== undefined) document.getElementById('teamNameInput').value = data.teamName;
+      if (data.matchInfo !== undefined) document.getElementById('matchInfoInput').value = data.matchInfo;
+      if (data.formation2nd !== undefined) document.getElementById('formation2ndInput').value = data.formation2nd;
+      if (data.formation1st !== undefined) document.getElementById('formation1stInput').value = data.formation1st;
+      if (data.mode) document.getElementById('modeSelect').value = data.mode;
+      players = normalizePlayers(data.players);
+      toggleMode();
+    }
+
+    function saveToLocalStorage() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(collectState()));
+      } catch (e) {}
     }
 
     function loadFromLocalStorage() {
-      const saved = localStorage.getItem('lineupConfig');
-      if (saved) {
-        try {
-          const data = JSON.parse(saved);
-          document.getElementById('teamNameInput').value = data.teamName || '맨체스터 유나이티드';
-          document.getElementById('matchInfoInput').value = data.matchInfo || '1라운드 • 전/후반 통합 명단';
-          document.getElementById('formation2ndInput').value = data.formation2nd || '4-3-3';
-          document.getElementById('formation1stInput').value = data.formation1st || '4-2-3-1';
-          document.getElementById('modeSelect').value = data.mode || 'graphic';
-          toggleMode();
-        } catch(e) {}
-      }
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) applyState(JSON.parse(saved));
+      } catch (e) {}
     }
 
     function exportConfig() {
-      const data = {
-        teamName: document.getElementById('teamNameInput').value,
-        matchInfo: document.getElementById('matchInfoInput').value,
-        formation2nd: document.getElementById('formation2ndInput').value,
-        formation1st: document.getElementById('formation1stInput').value,
-        mode: document.getElementById('modeSelect').value
-      };
-      
+      const data = collectState();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -603,28 +719,22 @@
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = function(e) {
+      reader.onload = function (e) {
         try {
           const data = JSON.parse(e.target.result);
-          if (data.teamName) document.getElementById('teamNameInput').value = data.teamName;
-          if (data.matchInfo) document.getElementById('matchInfoInput').value = data.matchInfo;
-          if (data.formation2nd) document.getElementById('formation2ndInput').value = data.formation2nd;
-          if (data.formation1st) document.getElementById('formation1stInput').value = data.formation1st;
-          if (data.mode) {
-            document.getElementById('modeSelect').value = data.mode;
-            toggleMode();
-          }
+          applyState(data);
           onDataChange();
-        } catch(err) {
+        } catch (err) {
           alert('올바른 설정 파일이 아닙니다.');
         }
+        event.target.value = '';
       };
       reader.readAsText(file);
     }
 
     function downloadLineup() {
       const card = document.getElementById('lineupCard');
-      
+
       html2canvas(card, {
         scale: 3,
         backgroundColor: null,
